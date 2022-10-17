@@ -2,7 +2,7 @@ import random as random
 import numpy as np
 import matplotlib.pyplot as plt
 
-class DescisionTree:
+class DecisionTree:
     def __init__(self, dataset):
         split_value, split_column, left_dataset, right_dataset = find_split(dataset)
 
@@ -11,8 +11,8 @@ class DescisionTree:
         self.is_leaf = False
         self.leaf_prediction = 0
 
-        self.left_branch = DescisionTree(left_dataset)
-        self.right_branch = DescisionTree(right_dataset)
+        self.left_branch = DecisionTree(left_dataset)
+        self.right_branch = DecisionTree(right_dataset)
 
     def depth(self):
         if self.is_leaf:
