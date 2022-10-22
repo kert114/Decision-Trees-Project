@@ -1,11 +1,14 @@
 import random as random
 import numpy as np
-import matplotlib.pyplot as plt
 import abc
 
 class TreeNode(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def depth(self):
+        pass
+
+    @abc.abstractmethod
+    def node_count(self):
         pass
 
     # @abc.abstractmethod
@@ -19,9 +22,12 @@ class TreeNode(metaclass=abc.ABCMeta):
     def predict_batch(self, input_batch):
         return [self.predict(x) for x in input_batch]
 
-    # @abc.abstractmethod
-    # def prune(self):
-    #     pass
+    # A prune method for improving the accuracy of our decision tree when the
+    # dataset contains noise.
+    # Returns a tuple TreeNode where TreeNode is the pruned node.
+    @abc.abstractmethod
+    def prune(self, validation_dataset):
+        pass
 
 class LeafNode(TreeNode):
     def __init__(self, prediction):
@@ -30,8 +36,14 @@ class LeafNode(TreeNode):
     def depth(self):
         return 1
 
+    def node_count(self):
+        return 1
+
     def predict(self, input):
         return self.prediction
+
+    def prune(self, validation_dataset):
+        return self
 
 class DecisionNode(TreeNode):
     def __init__(self, left_branch, right_branch, split_value, split_column):
@@ -45,11 +57,45 @@ class DecisionNode(TreeNode):
     def depth(self):
         return max(self.right_branch.depth(), self.left_branch.depth()) + 1
 
+    def node_count(self):
+        return 1 + self.left_branch.node_count() + self.right_branch.node_count()
+
     def predict(self, input):
         if input[self.split_column] > self.split_value:
             return self.right_branch.predict(input)
         else:
             return self.left_branch.predict(input)
+
+    def prune(self, validation_dataset):
+        left_dataset, right_dataset = split_dataset(validation_dataset, self.split_column, self.split_value)
+        # Call prune on children with their split of the validation dataset
+        new_left = self.left_branch.prune(left_dataset)
+        new_right = self.right_branch.prune(right_dataset)
+        self.left_branch = new_left
+        self.right_branch = new_right
+        # If they're both leaves, then calculate accuracy and then merge them together
+        if isinstance(new_left, LeafNode) and isinstance(new_right, LeafNode):
+            if len(validation_dataset) == 0:
+                return new_left
+            # calculate accuracy of self
+            current_confusion_matrix = create_confusion_matrix(validation_dataset[:, -1], self.predict_batch(validation_dataset))
+            current_accuracy = calculate_accuracy(current_confusion_matrix)
+
+            # create a new leaf node with majority vote
+            values, counts = np.unique(validation_dataset[:, -1], return_counts=True)
+            majority_vote = values[np.argmax(counts)]
+            candidate_node = LeafNode(majority_vote)
+
+            # Test the new merged node on the validation dataset
+            candidate_confusion_matrix = create_confusion_matrix(validation_dataset[:, -1], candidate_node.predict_batch(validation_dataset))
+            candidate_accuracy = calculate_accuracy(candidate_confusion_matrix)
+
+            # If the accuracy increases or is the same, then we return the merged node
+            if candidate_accuracy >= current_accuracy:
+                return candidate_node
+            
+        # Else return self
+        return self
 
 def build_decision_tree(dataset):
     # Find the best split.
@@ -173,27 +219,124 @@ def create_confusion_matrix(true_labels, predicted_labels):
     return confusion_matrix
 
 def calculate_accuracy(confusion_matrix):
-    accuracy = sum(np.diagonal(confusion_matrix)) / sum(confusion_matrix)
+    accuracy = np.sum(np.diagonal(confusion_matrix)) / np.sum(confusion_matrix)
     return accuracy
 
+# Calculate recall per class
+# confusion_matrix: confusion matrix (4x4 numpy matrix)
+# Returns a 4-element array with recall for each class
+def calculate_recall(confusion_matrix):
+    # Recall = TP / (TP + FN)
+    # TP = diagonal element
+    # FN = sum of row - diagonal element
+    row_sums = confusion_matrix.sum(axis=1)
+    diagonals = confusion_matrix.diagonal()
+    return diagonals/row_sums
 
+# Calculate precision per class
+# confusion_matrix: confusion matrix (4x4 numpy matrix)
+# Returns a 4-element array with precision for each class
+def calculate_precision(confusion_matrix):
+    # Precision = TP / (TP + FP)
+    # TP = diagonal element
+    # FP = sum of column - diagonal element
+    return calculate_recall(confusion_matrix.T)
+
+# Calculate f1 measure per class
+# confusion_matrix: confusion matrix (4x4 numpy matrix)
+# beta: the weight of precision in the metric
+# Returns a 4-element array with f measure for each class
+def calculate_f_measures(confusion_matrix, beta=1):
+    # F1 = (1 + beta^2) * (precision * recall) / (beta^2 * precision + recall)
+    precision = calculate_precision(confusion_matrix)
+    recall = calculate_recall(confusion_matrix)
+    return (1 + beta**2) * (precision * recall) / (beta**2 * precision + recall)
+
+def evaluate(test_dataset, trained_tree):
+    confusion_matrix = create_confusion_matrix(test_dataset[:, -1], trained_tree.predict_batch(test_dataset))
+    return calculate_accuracy(confusion_matrix)
 
 if __name__ == "__main__":
     print("This is the main body!")
-    dataset = load_data("./wifi_db/clean_dataset.txt")
+    dataset = load_data("./wifi_db/noisy_dataset.txt")
 
     split_data = split_training_data(dataset)
 
-    ds = build_decision_tree(np.concatenate(split_data[:9]))
+    confusion_matrices = []
+    pruned_confusion_matrices = []
 
-    x = [x[:-1] for x in split_data[9]]
+    # 10-fold cross-validation, so we train on 9/10 of the data and test on 1/10
+    # Repeat for each 1/10 test set
+    # Average evaluation metrics to estimate global performance (estimate for if tree was trained on whole dataset)
+    for i in range(10):
+        test_data = split_data[i]
+        # print(split_data[:i] + split_data[i+1:])
+        training_validation_data = split_data[:i] + split_data[i+1:]
 
-    y_pred = ds.predict_batch(x)
+        best_tree = None
+        best_accuracy = -1
 
-    y_true = [x[-1] for x in split_data[9]]
+        # Validation to select best tree
+        for j in range(9):
+            training_data = np.concatenate(training_validation_data[:j] + training_validation_data[j+1:])
+            validation_data = training_validation_data[j]
+            
+            ds = build_decision_tree(training_data)
+            candidate_accuracy = evaluate(validation_data, ds)
 
-    cm = create_confusion_matrix(y_true, y_pred)
+            if candidate_accuracy > best_accuracy:
+                best_accuracy = candidate_accuracy
+                best_tree = ds
+            
+        confusion_matrix = create_confusion_matrix(test_data[:, -1], best_tree.predict_batch(test_data))
+        confusion_matrices.append(confusion_matrix)
+    
+    
+    avg_accuracy = np.mean([calculate_accuracy(x) for x in confusion_matrices])
+    avg_recall = np.mean([calculate_recall(x) for x in confusion_matrices], axis=0)
+    avg_precision = np.mean([calculate_precision(x) for x in confusion_matrices], axis=0)
+    avg_f1_measure = np.mean([calculate_f_measures(x) for x in confusion_matrices], axis=0)
 
-    print(cm)
+    print("Non pruned")
+    print(avg_accuracy)
+    print(avg_recall)
+    print(avg_precision)
+    print(avg_f1_measure)
+    print()
 
-    print(ds.depth())
+    for i in range(10):
+        test_data = split_data[i]
+        # print(split_data[:i] + split_data[i+1:])
+        training_validation_data = split_data[:i] + split_data[i+1:]
+
+        best_tree = None
+        best_accuracy = -1
+
+        # Validation to select best tree
+        for j in range(9):
+            training_data = np.concatenate(training_validation_data[:j] + training_validation_data[j+1:])
+            validation_data = training_validation_data[j]
+            
+            ds = build_decision_tree(training_data)
+            ds = ds.prune(validation_data)
+            candidate_accuracy = evaluate(validation_data, ds)
+
+            if candidate_accuracy > best_accuracy:
+                best_accuracy = candidate_accuracy
+                best_tree = ds
+            
+        confusion_matrix = create_confusion_matrix(test_data[:, -1], best_tree.predict_batch(test_data))
+        pruned_confusion_matrices.append(confusion_matrix)
+
+    # Average evaluation metrics
+
+    avg_pruned_accuracy = np.mean([calculate_accuracy(x) for x in pruned_confusion_matrices])
+    avg_pruned_recall = np.mean([calculate_recall(x) for x in pruned_confusion_matrices], axis=0)
+    avg_pruned_precision = np.mean([calculate_precision(x) for x in pruned_confusion_matrices], axis=0)
+    avg_pruned_f1_measure = np.mean([calculate_f_measures(x) for x in pruned_confusion_matrices], axis=0)
+
+    print("Pruned")
+    print(avg_pruned_accuracy)
+    print(avg_pruned_recall)
+    print(avg_pruned_precision)
+    print(avg_pruned_f1_measure)
