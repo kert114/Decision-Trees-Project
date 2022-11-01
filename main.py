@@ -1,6 +1,6 @@
-import random as random
 import numpy as np
 import abc
+import sys
 
 class TreeNode(metaclass=abc.ABCMeta):
     @abc.abstractmethod
@@ -256,14 +256,11 @@ def evaluate(test_dataset, trained_tree):
     confusion_matrix = create_confusion_matrix(test_dataset[:, -1], trained_tree.predict_batch(test_dataset))
     return calculate_accuracy(confusion_matrix)
 
-if __name__ == "__main__":
-    print("This is the main body!")
-    dataset = load_data("./wifi_db/noisy_dataset.txt")
-
+def train_on_dataset(datset, pruning=False):
     split_data = split_training_data(dataset)
 
-    confusion_matrices = []
-    pruned_confusion_matrices = []
+    cumulative_confusion_matrix = np.zeros((4, 4))
+    cumulative_depth = 0
 
     # 10-fold cross-validation, so we train on 9/10 of the data and test on 1/10
     # Repeat for each 1/10 test set
@@ -282,6 +279,8 @@ if __name__ == "__main__":
             validation_data = training_validation_data[j]
             
             ds = build_decision_tree(training_data)
+            if pruning:
+                ds = ds.prune(validation_data)
             candidate_accuracy = evaluate(validation_data, ds)
 
             if candidate_accuracy > best_accuracy:
@@ -289,54 +288,37 @@ if __name__ == "__main__":
                 best_tree = ds
             
         confusion_matrix = create_confusion_matrix(test_data[:, -1], best_tree.predict_batch(test_data))
-        confusion_matrices.append(confusion_matrix)
+        cumulative_confusion_matrix += confusion_matrix
+        cumulative_depth += best_tree.depth()
     
     
-    avg_accuracy = np.mean([calculate_accuracy(x) for x in confusion_matrices])
-    avg_recall = np.mean([calculate_recall(x) for x in confusion_matrices], axis=0)
-    avg_precision = np.mean([calculate_precision(x) for x in confusion_matrices], axis=0)
-    avg_f1_measure = np.mean([calculate_f_measures(x) for x in confusion_matrices], axis=0)
+    avg_accuracy = calculate_accuracy(cumulative_confusion_matrix)
+    avg_recall = calculate_recall(cumulative_confusion_matrix)
+    avg_precision = calculate_precision(cumulative_confusion_matrix)
+    avg_f1_measure = calculate_f_measures(cumulative_confusion_matrix)
+    avg_depth = cumulative_depth / 10
 
-    print("Non pruned")
-    print(avg_accuracy)
-    print(avg_recall)
-    print(avg_precision)
-    print(avg_f1_measure)
+    return cumulative_confusion_matrix, avg_accuracy, avg_recall, avg_precision, avg_f1_measure, avg_depth
+
+def pretty_print(confusion_matrix, avg_accuracy, avg_recall, avg_precision, avg_f1_measure, avg_depth):
+    print("Confusion Matrix:")
+    print(confusion_matrix)
+    print("Average Accuracy:", avg_accuracy)
+    print("Average Per-Class Recall:", avg_recall)
+    print("Average Per-Class Precision:", avg_precision)
+    print("Average Per-Class F1 Measure:", avg_f1_measure)
+    print("Average Depth:", avg_depth)
+
+if __name__ == "__main__":
+    dataset_path = sys.argv[1]
+    dataset = load_data(dataset_path)
+
+    print("=====Non pruned=====")
+    evaluation_metrics = train_on_dataset(dataset)
+    pretty_print(*evaluation_metrics)
+    print("====================")
     print()
-
-    for i in range(10):
-        test_data = split_data[i]
-        # print(split_data[:i] + split_data[i+1:])
-        training_validation_data = split_data[:i] + split_data[i+1:]
-
-        best_tree = None
-        best_accuracy = -1
-
-        # Validation to select best tree
-        for j in range(9):
-            training_data = np.concatenate(training_validation_data[:j] + training_validation_data[j+1:])
-            validation_data = training_validation_data[j]
-            
-            ds = build_decision_tree(training_data)
-            ds = ds.prune(validation_data)
-            candidate_accuracy = evaluate(validation_data, ds)
-
-            if candidate_accuracy > best_accuracy:
-                best_accuracy = candidate_accuracy
-                best_tree = ds
-            
-        confusion_matrix = create_confusion_matrix(test_data[:, -1], best_tree.predict_batch(test_data))
-        pruned_confusion_matrices.append(confusion_matrix)
-
-    # Average evaluation metrics
-
-    avg_pruned_accuracy = np.mean([calculate_accuracy(x) for x in pruned_confusion_matrices])
-    avg_pruned_recall = np.mean([calculate_recall(x) for x in pruned_confusion_matrices], axis=0)
-    avg_pruned_precision = np.mean([calculate_precision(x) for x in pruned_confusion_matrices], axis=0)
-    avg_pruned_f1_measure = np.mean([calculate_f_measures(x) for x in pruned_confusion_matrices], axis=0)
-
-    print("Pruned")
-    print(avg_pruned_accuracy)
-    print(avg_pruned_recall)
-    print(avg_pruned_precision)
-    print(avg_pruned_f1_measure)
+    print("=======Pruned=======")
+    evaluation_metrics = train_on_dataset(dataset, pruning=True)
+    pretty_print(*evaluation_metrics)
+    print("====================")
