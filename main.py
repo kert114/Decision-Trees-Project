@@ -176,7 +176,86 @@ def calculate_accuracy(confusion_matrix):
     accuracy = sum(np.diagonal(confusion_matrix)) / sum(confusion_matrix)
     return accuracy
 
+# Adjustment from current x position - Left or Right
+OFFSET = 300
+Y_SPACE = 1
 
+
+def traverse_tree(root, m_depth, depth=1, x=0, y=50):
+
+    # Plots the nodes
+    if isinstance(root, DecisionNode):
+        plt.text(
+            x,
+            y,
+            ("X" + str(root.split_column) + " < " + str(root.split_value)),
+            size="smaller",
+            rotation=0,
+            ha="center",
+            va="center",
+            bbox=dict(
+                boxstyle="round",
+                ec=(0.0, 0.0, 0.0),
+                fc=(1.0, 1.0, 1.0),
+            ),
+        )
+
+        # Sets the correct spacing between nodes
+
+        height = m_depth - depth - 1
+
+        ypos_child = y - Y_SPACE
+        left_child = x - (np.power(2, height) * OFFSET)
+        right_child = x + (np.power(2, height) * OFFSET)
+
+        x_val = [left_child, x, right_child]
+        y_val = [ypos_child, y, ypos_child]
+        plt.plot(x_val, y_val)
+
+    # Plots the leaf
+    else:
+        assert isinstance(root, LeafNode)
+        plt.text(
+            x,
+            y,
+            str(root.prediction),
+            size="smaller",
+            rotation=0,
+            ha="center",
+            va="center",
+            bbox=dict(
+                boxstyle="circle",
+                ec=(0.0, 0.0, 0.0),
+                fc=(0.3, 1.0, 0.3),
+            ),
+        )
+
+    # If on a node, recursively call function and increase depth by 1
+    if isinstance(root, DecisionNode):
+        traverse_tree(root.left_branch, m_depth, depth + 1, left_child, ypos_child)
+        traverse_tree(root.right_branch, m_depth, depth + 1, right_child, ypos_child)
+        return
+
+
+def plot_tree(root, max_depth, file = "tree.png"):
+    plt.figure(figsize=(min(2*10, 2*max_depth), max_depth), dpi=80)
+    plt.axis("off")
+    traverse_tree(root, max_depth)
+    plt.savefig(file)
+    plt.close()
+
+    if max_depth > 10:
+        plt.figure(figsize=(min(2*10, 2*max_depth), max_depth), dpi=80)
+        plt.axis("off")
+        traverse_tree(root.left_branch, max_depth)
+        plt.savefig(file[:-4] + "_zoomedleft.png")
+        plt.close()
+        plt.figure(figsize=(min(2*10, 2*max_depth), max_depth), dpi=80)
+        plt.axis("off")
+        traverse_tree(root.right_branch, max_depth)
+        plt.savefig(file[:-4] + "_zoomedright.png")
+        plt.close()
+    return
 
 if __name__ == "__main__":
     print("This is the main body!")
@@ -197,3 +276,5 @@ if __name__ == "__main__":
     print(cm)
 
     print(ds.depth())
+
+    plot_tree(ds, ds.depth())
